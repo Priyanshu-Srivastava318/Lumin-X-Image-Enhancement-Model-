@@ -16,6 +16,16 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Restore image from sessionStorage if exists
+    const savedImageSrc = sessionStorage.getItem('editorImage');
+    if (savedImageSrc) {
+      const img = new Image();
+      img.onload = () => {
+        setSelectedImage(img);
+      };
+      img.src = savedImageSrc;
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       setLoading(false);
@@ -23,6 +33,7 @@ function App() {
         setCurrentPage('upload');
       } else {
         setCurrentPage('login');
+        sessionStorage.removeItem('editorImage');
       }
     });
 
@@ -32,6 +43,7 @@ function App() {
         setCurrentPage('upload');
       } else {
         setCurrentPage('login');
+        sessionStorage.removeItem('editorImage');
       }
     });
 
@@ -40,18 +52,17 @@ function App() {
 
   const handleImageSelected = (image) => {
     setSelectedImage(image);
+    sessionStorage.setItem('editorImage', image.src);
     setCurrentPage('editor');
   };
 
   const handleBackToUpload = () => {
     setSelectedImage(null);
+    sessionStorage.removeItem('editorImage');
     setCurrentPage('upload');
   };
 
   const handlePageChange = (page) => {
-    if (page === 'upload') {
-      setSelectedImage(null);
-    }
     setCurrentPage(page);
   };
 
@@ -79,7 +90,7 @@ function App() {
       />
       
       {currentPage === 'upload' && (
-        <UploadPage onImageSelected={handleImageSelected} key={currentPage} />
+        <UploadPage onImageSelected={handleImageSelected} />
       )}
       {currentPage === 'editor' && selectedImage && (
         <EditorPage 

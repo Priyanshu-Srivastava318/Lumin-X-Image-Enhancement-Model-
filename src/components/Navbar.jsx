@@ -8,8 +8,23 @@ const Navbar = ({ currentPage, setCurrentPage, user }) => {
   const handleLogout = async () => {
     try {
       await supabase.auth.signOut();
+      sessionStorage.removeItem('editorImage');
     } catch (error) {
       console.error('Logout error:', error);
+    }
+  };
+
+  const handleNavClick = (pageId) => {
+    // Special handling for Upload button
+    if (pageId === 'upload') {
+      const hasImage = sessionStorage.getItem('editorImage');
+      if (hasImage) {
+        setCurrentPage('editor'); // Go back to editor if image exists
+      } else {
+        setCurrentPage('upload'); // Go to upload if no image
+      }
+    } else {
+      setCurrentPage(pageId);
     }
   };
 
@@ -32,12 +47,16 @@ const Navbar = ({ currentPage, setCurrentPage, user }) => {
           <div className="hidden md:flex items-center gap-6">
             {navItems.map((item) => {
               const Icon = item.icon;
+              const isActive = item.id === 'upload' 
+                ? (currentPage === 'upload' || currentPage === 'editor')
+                : currentPage === item.id;
+              
               return (
                 <button
                   key={item.id}
-                  onClick={() => setCurrentPage(item.id)}
+                  onClick={() => handleNavClick(item.id)}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                    currentPage === item.id 
+                    isActive
                       ? 'bg-blue-600 text-white' 
                       : 'text-slate-300 hover:text-white hover:bg-slate-700'
                   }`}
@@ -77,15 +96,19 @@ const Navbar = ({ currentPage, setCurrentPage, user }) => {
           <div className="md:hidden py-4 space-y-2 border-t border-slate-700">
             {navItems.map((item) => {
               const Icon = item.icon;
+              const isActive = item.id === 'upload' 
+                ? (currentPage === 'upload' || currentPage === 'editor')
+                : currentPage === item.id;
+              
               return (
                 <button
                   key={item.id}
                   onClick={() => {
-                    setCurrentPage(item.id);
+                    handleNavClick(item.id);
                     setMobileMenuOpen(false);
                   }}
                   className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                    currentPage === item.id
+                    isActive
                       ? 'bg-blue-600 text-white'
                       : 'text-slate-300 hover:bg-slate-700'
                   }`}

@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { ArrowLeft, Download, Save, Sliders, RefreshCw, Info, Check } from 'lucide-react';
+import { ArrowLeft, Download, Save, Sliders, RefreshCw, Info, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { supabase } from '../supabase/config';
 import { 
   applyRetinex, 
@@ -28,6 +28,7 @@ const EditorPage = ({ image, onBack, userId }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [showComparison, setShowComparison] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   
   const canvasRef = useRef(null);
 
@@ -55,7 +56,6 @@ const EditorPage = ({ image, onBack, userId }) => {
       
       let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       
-      // Apply selected algorithm
       switch (algorithm) {
         case 'retinex':
           imageData = applyRetinex(imageData);
@@ -71,7 +71,6 @@ const EditorPage = ({ image, onBack, userId }) => {
           break;
       }
       
-      // Apply all enhancements
       imageData = applyEnhancements(imageData, {
         brightness, contrast, saturation, sharpness, exposure,
         shadows, highlights, warmth, gamma, vibrance, noiseReduction
@@ -95,11 +94,9 @@ const EditorPage = ({ image, onBack, userId }) => {
     setIsSaving(true);
     
     try {
-      // Convert base64 to blob
       const response = await fetch(enhancedImage.src);
       const blob = await response.blob();
       
-      // Upload to Supabase Storage
       const fileName = `${userId}/${Date.now()}.png`;
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('enhanced-images')
@@ -107,12 +104,10 @@ const EditorPage = ({ image, onBack, userId }) => {
       
       if (uploadError) throw uploadError;
       
-      // Get public URL
       const { data: { publicUrl } } = supabase.storage
         .from('enhanced-images')
         .getPublicUrl(fileName);
       
-      // Save metadata to database
       const { error: dbError } = await supabase
         .from('enhancements')
         .insert({
@@ -154,18 +149,18 @@ const EditorPage = ({ image, onBack, userId }) => {
   return (
     <div className="p-6">
       <div className="max-w-7xl mx-auto">
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <button
               onClick={onBack}
               className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors"
             >
               <ArrowLeft className="w-5 h-5" />
-              Back to Upload
+              Back
             </button>
             <div>
               <h2 className="text-2xl font-bold text-white">Image Editor</h2>
-              <p className="text-slate-400">Enhance your image with 11 advanced controls</p>
+              <p className="text-slate-400 text-sm">Enhance with 11 controls & 4 algorithms</p>
             </div>
           </div>
           
@@ -191,7 +186,7 @@ const EditorPage = ({ image, onBack, userId }) => {
                   className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
                 >
                   <Save className="w-4 h-4" />
-                  {isSaving ? 'Saving...' : 'Save to Cloud'}
+                  {isSaving ? 'Saving...' : 'Save'}
                 </button>
               </>
             )}
@@ -200,196 +195,202 @@ const EditorPage = ({ image, onBack, userId }) => {
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Controls Panel */}
-          <div className="lg:col-span-1 space-y-4 max-h-[calc(100vh-12rem)] overflow-y-auto pr-2">
-            {/* Algorithm Selection */}
-            <div className="bg-slate-800 rounded-lg p-4 border border-slate-700 sticky top-0 z-10">
-              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-                <Sliders className="w-4 h-4 text-blue-400" />
+          <div className="lg:col-span-1 space-y-4">
+            {/* Algorithm Dropdown */}
+            <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+              <label className="block text-sm font-semibold text-white mb-3">
                 Enhancement Algorithm
-              </h3>
-              
-              <div className="space-y-2">
+              </label>
+              <select
+                value={algorithm}
+                onChange={(e) => setAlgorithm(e.target.value)}
+                className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors cursor-pointer"
+              >
                 {algorithms.map((algo) => (
-                  <div
-                    key={algo.id}
-                    onClick={() => setAlgorithm(algo.id)}
-                    className={`p-3 rounded-lg cursor-pointer transition-all ${
-                      algorithm === algo.id
-                        ? 'bg-blue-600 border-blue-500'
-                        : 'bg-slate-700 border-slate-600 hover:bg-slate-650'
-                    } border`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-xl">{algo.icon}</span>
-                      <div className="flex-1">
-                        <div className="font-medium text-white text-sm">{algo.name}</div>
-                        <div className="text-xs text-slate-300 mt-0.5">{algo.desc}</div>
-                      </div>
-                    </div>
-                  </div>
+                  <option key={algo.id} value={algo.id}>
+                    {algo.icon} {algo.name}
+                  </option>
                 ))}
-              </div>
+              </select>
+              <p className="text-xs text-slate-400 mt-2">
+                {algorithms.find(a => a.id === algorithm)?.desc}
+              </p>
             </div>
 
-            {/* Parameters */}
+            {/* Basic Parameters */}
             <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-semibold text-white">Parameters (11 Controls)</h3>
+                <h3 className="text-sm font-semibold text-white">Basic Adjustments</h3>
                 <button
                   onClick={resetParameters}
                   className="text-slate-400 hover:text-white transition-colors"
-                  title="Reset"
+                  title="Reset all"
                 >
                   <RefreshCw className="w-4 h-4" />
                 </button>
               </div>
               
               <div className="space-y-4">
-                {/* All 11 sliders */}
                 <div>
-                  <div className="flex justify-between mb-1.5">
-                    <label className="text-xs text-slate-300">Brightness</label>
-                    <span className="text-xs text-blue-400 font-mono">{brightness.toFixed(2)}</span>
+                  <div className="flex justify-between mb-2">
+                    <label className="text-sm text-slate-300">Brightness</label>
+                    <span className="text-sm text-blue-400 font-mono">{brightness.toFixed(2)}</span>
                   </div>
                   <input type="range" min="0.5" max="2.5" step="0.1" value={brightness}
                     onChange={(e) => setBrightness(parseFloat(e.target.value))}
-                    className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
                   />
                 </div>
 
                 <div>
-                  <div className="flex justify-between mb-1.5">
-                    <label className="text-xs text-slate-300">Contrast</label>
-                    <span className="text-xs text-blue-400 font-mono">{contrast.toFixed(2)}</span>
+                  <div className="flex justify-between mb-2">
+                    <label className="text-sm text-slate-300">Contrast</label>
+                    <span className="text-sm text-blue-400 font-mono">{contrast.toFixed(2)}</span>
                   </div>
                   <input type="range" min="0.5" max="2.0" step="0.1" value={contrast}
                     onChange={(e) => setContrast(parseFloat(e.target.value))}
-                    className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
                   />
                 </div>
 
                 <div>
-                  <div className="flex justify-between mb-1.5">
-                    <label className="text-xs text-slate-300">Saturation</label>
-                    <span className="text-xs text-blue-400 font-mono">{saturation.toFixed(2)}</span>
+                  <div className="flex justify-between mb-2">
+                    <label className="text-sm text-slate-300">Saturation</label>
+                    <span className="text-sm text-blue-400 font-mono">{saturation.toFixed(2)}</span>
                   </div>
                   <input type="range" min="0.5" max="2.0" step="0.05" value={saturation}
                     onChange={(e) => setSaturation(parseFloat(e.target.value))}
-                    className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
                   />
                 </div>
 
                 <div>
-                  <div className="flex justify-between mb-1.5">
-                    <label className="text-xs text-slate-300">Exposure</label>
-                    <span className="text-xs text-blue-400 font-mono">{exposure.toFixed(2)}</span>
+                  <div className="flex justify-between mb-2">
+                    <label className="text-sm text-slate-300">Exposure</label>
+                    <span className="text-sm text-blue-400 font-mono">{exposure.toFixed(2)}</span>
                   </div>
                   <input type="range" min="-1" max="1" step="0.1" value={exposure}
                     onChange={(e) => setExposure(parseFloat(e.target.value))}
-                    className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex justify-between mb-1.5">
-                    <label className="text-xs text-slate-300">Sharpness</label>
-                    <span className="text-xs text-blue-400 font-mono">{sharpness}</span>
-                  </div>
-                  <input type="range" min="0" max="100" step="5" value={sharpness}
-                    onChange={(e) => setSharpness(parseInt(e.target.value))}
-                    className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex justify-between mb-1.5">
-                    <label className="text-xs text-slate-300">Shadows</label>
-                    <span className="text-xs text-blue-400 font-mono">{shadows}</span>
-                  </div>
-                  <input type="range" min="-100" max="100" step="5" value={shadows}
-                    onChange={(e) => setShadows(parseInt(e.target.value))}
-                    className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex justify-between mb-1.5">
-                    <label className="text-xs text-slate-300">Highlights</label>
-                    <span className="text-xs text-blue-400 font-mono">{highlights}</span>
-                  </div>
-                  <input type="range" min="-100" max="100" step="5" value={highlights}
-                    onChange={(e) => setHighlights(parseInt(e.target.value))}
-                    className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex justify-between mb-1.5">
-                    <label className="text-xs text-slate-300">Warmth</label>
-                    <span className="text-xs text-blue-400 font-mono">{warmth}</span>
-                  </div>
-                  <input type="range" min="-10" max="10" step="1" value={warmth}
-                    onChange={(e) => setWarmth(parseInt(e.target.value))}
-                    className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex justify-between mb-1.5">
-                    <label className="text-xs text-slate-300">Gamma</label>
-                    <span className="text-xs text-blue-400 font-mono">{gamma.toFixed(2)}</span>
-                  </div>
-                  <input type="range" min="0.5" max="2.5" step="0.1" value={gamma}
-                    onChange={(e) => setGamma(parseFloat(e.target.value))}
-                    className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex justify-between mb-1.5">
-                    <label className="text-xs text-slate-300">Vibrance</label>
-                    <span className="text-xs text-blue-400 font-mono">{vibrance.toFixed(2)}</span>
-                  </div>
-                  <input type="range" min="-1" max="1" step="0.1" value={vibrance}
-                    onChange={(e) => setVibrance(parseFloat(e.target.value))}
-                    className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex justify-between mb-1.5">
-                    <label className="text-xs text-slate-300">Noise Reduction</label>
-                    <span className="text-xs text-blue-400 font-mono">{noiseReduction}</span>
-                  </div>
-                  <input type="range" min="0" max="100" step="5" value={noiseReduction}
-                    onChange={(e) => setNoiseReduction(parseInt(e.target.value))}
-                    className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
                   />
                 </div>
               </div>
-
-              <button
-                onClick={applyEnhancement}
-                disabled={isProcessing}
-                className={`w-full mt-4 py-3 rounded-lg transition-colors flex items-center justify-center gap-2 font-medium ${
-                  isProcessing
-                    ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                    : 'bg-green-600 hover:bg-green-700 text-white'
-                }`}
-              >
-                {isProcessing ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <Sliders className="w-4 h-4" />
-                    Apply Enhancement
-                  </>
-                )}
-              </button>
             </div>
+
+            {/* Advanced Parameters - Collapsible */}
+            <div className="bg-slate-800 rounded-lg border border-slate-700">
+              <button
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-700/50 transition-colors rounded-lg"
+              >
+                <span className="text-sm font-semibold text-white">Advanced Controls (7 more)</span>
+                {showAdvanced ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
+              </button>
+              
+              {showAdvanced && (
+                <div className="p-4 pt-0 space-y-4 border-t border-slate-700">
+                  <div>
+                    <div className="flex justify-between mb-2">
+                      <label className="text-sm text-slate-300">Sharpness</label>
+                      <span className="text-sm text-blue-400 font-mono">{sharpness}</span>
+                    </div>
+                    <input type="range" min="0" max="100" step="5" value={sharpness}
+                      onChange={(e) => setSharpness(parseInt(e.target.value))}
+                      className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between mb-2">
+                      <label className="text-sm text-slate-300">Shadows</label>
+                      <span className="text-sm text-blue-400 font-mono">{shadows}</span>
+                    </div>
+                    <input type="range" min="-100" max="100" step="5" value={shadows}
+                      onChange={(e) => setShadows(parseInt(e.target.value))}
+                      className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between mb-2">
+                      <label className="text-sm text-slate-300">Highlights</label>
+                      <span className="text-sm text-blue-400 font-mono">{highlights}</span>
+                    </div>
+                    <input type="range" min="-100" max="100" step="5" value={highlights}
+                      onChange={(e) => setHighlights(parseInt(e.target.value))}
+                      className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between mb-2">
+                      <label className="text-sm text-slate-300">Warmth</label>
+                      <span className="text-sm text-blue-400 font-mono">{warmth}</span>
+                    </div>
+                    <input type="range" min="-10" max="10" step="1" value={warmth}
+                      onChange={(e) => setWarmth(parseInt(e.target.value))}
+                      className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between mb-2">
+                      <label className="text-sm text-slate-300">Gamma</label>
+                      <span className="text-sm text-blue-400 font-mono">{gamma.toFixed(2)}</span>
+                    </div>
+                    <input type="range" min="0.5" max="2.5" step="0.1" value={gamma}
+                      onChange={(e) => setGamma(parseFloat(e.target.value))}
+                      className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between mb-2">
+                      <label className="text-sm text-slate-300">Vibrance</label>
+                      <span className="text-sm text-blue-400 font-mono">{vibrance.toFixed(2)}</span>
+                    </div>
+                    <input type="range" min="-1" max="1" step="0.1" value={vibrance}
+                      onChange={(e) => setVibrance(parseFloat(e.target.value))}
+                      className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between mb-2">
+                      <label className="text-sm text-slate-300">Noise Reduction</label>
+                      <span className="text-sm text-blue-400 font-mono">{noiseReduction}</span>
+                    </div>
+                    <input type="range" min="0" max="100" step="5" value={noiseReduction}
+                      onChange={(e) => setNoiseReduction(parseInt(e.target.value))}
+                      className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Apply Button */}
+            <button
+              onClick={applyEnhancement}
+              disabled={isProcessing}
+              className={`w-full py-3 rounded-lg transition-colors flex items-center justify-center gap-2 font-medium ${
+                isProcessing
+                  ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                  : 'bg-green-600 hover:bg-green-700 text-white'
+              }`}
+            >
+              {isProcessing ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <Sliders className="w-4 h-4" />
+                  Apply Enhancement
+                </>
+              )}
+            </button>
           </div>
 
           {/* Image Preview */}
@@ -397,7 +398,7 @@ const EditorPage = ({ image, onBack, userId }) => {
             {showComparison && enhancedImage ? (
               <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
                 <h3 className="text-lg font-semibold text-white mb-4">Before & After</h3>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <div className="text-sm text-slate-400 mb-2">Original</div>
                     <div className="bg-slate-900 rounded-lg p-2">
@@ -427,7 +428,7 @@ const EditorPage = ({ image, onBack, userId }) => {
                 <div className="text-sm text-slate-300">
                   <strong className="text-blue-400">Current:</strong> {algorithms.find(a => a.id === algorithm)?.name}
                   <br />
-                  <span className="text-slate-400">{algorithms.find(a => a.id === algorithm)?.desc}</span>
+                  <span className="text-slate-400">Adjust parameters and click "Apply Enhancement" to process.</span>
                 </div>
               </div>
             </div>
