@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Download, Trash2, Loader } from 'lucide-react';
+import { Clock, Download, Trash2, Loader, RefreshCw } from 'lucide-react';
 import { supabase } from '../supabase/config';
 
 const HistoryPage = ({ userId }) => {
@@ -8,6 +8,21 @@ const HistoryPage = ({ userId }) => {
 
   useEffect(() => {
     fetchHistory();
+    
+    // Real-time subscription for auto-refresh
+    const channel = supabase
+      .channel('enhancements-changes')
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'enhancements', filter: `user_id=eq.${userId}` },
+        () => {
+          fetchHistory();
+        }
+      )
+      .subscribe();
+    
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [userId]);
 
   const fetchHistory = async () => {
@@ -31,7 +46,6 @@ const HistoryPage = ({ userId }) => {
     if (!confirm('Delete this image?')) return;
     
     try {
-      // Delete from database
       const { error: dbError } = await supabase
         .from('enhancements')
         .delete()
@@ -39,7 +53,6 @@ const HistoryPage = ({ userId }) => {
       
       if (dbError) throw dbError;
       
-      // Delete from storage (optional - extract filename from URL)
       const fileName = imageUrl.split('/').pop();
       await supabase.storage
         .from('enhanced-images')
@@ -71,9 +84,21 @@ const HistoryPage = ({ userId }) => {
   return (
     <div className="p-6">
       <div className="max-w-7xl mx-auto">
-        <div className="mb-6">
-          <h2 className="text-2xl font-bold text-white mb-2">Processing History</h2>
-          <p className="text-slate-400">View all your enhanced images</p>
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-white mb-2">Processing History</h2>
+            <p className="text-slate-400">View all your enhanced images</p>
+          </div>
+          <button
+            onClick={() => {
+              setLoading(true);
+              fetchHistory();
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
         </div>
 
         {history.length === 0 ? (

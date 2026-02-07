@@ -16,7 +16,6 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check current session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       setLoading(false);
@@ -27,7 +26,6 @@ function App() {
       }
     });
 
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
       if (session?.user) {
@@ -50,6 +48,13 @@ function App() {
     setCurrentPage('upload');
   };
 
+  const handlePageChange = (page) => {
+    if (page === 'upload') {
+      setSelectedImage(null);
+    }
+    setCurrentPage(page);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center">
@@ -69,12 +74,12 @@ function App() {
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
       <Navbar 
         currentPage={currentPage}
-        setCurrentPage={setCurrentPage}
+        setCurrentPage={handlePageChange}
         user={user}
       />
       
       {currentPage === 'upload' && (
-        <UploadPage onImageSelected={handleImageSelected} />
+        <UploadPage onImageSelected={handleImageSelected} key={currentPage} />
       )}
       {currentPage === 'editor' && selectedImage && (
         <EditorPage 

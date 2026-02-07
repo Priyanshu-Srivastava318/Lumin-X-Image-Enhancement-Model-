@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, TrendingUp, Image, Clock, Loader } from 'lucide-react';
+import { BarChart3, TrendingUp, Image, Clock, Loader, RefreshCw } from 'lucide-react';
 import { supabase } from '../supabase/config';
 
 const AnalyticsPage = ({ userId }) => {
@@ -8,6 +8,21 @@ const AnalyticsPage = ({ userId }) => {
 
   useEffect(() => {
     fetchAnalytics();
+    
+    // Real-time subscription
+    const channel = supabase
+      .channel('analytics-changes')
+      .on('postgres_changes', 
+        { event: '*', schema: 'public', table: 'enhancements', filter: `user_id=eq.${userId}` },
+        () => {
+          fetchAnalytics();
+        }
+      )
+      .subscribe();
+    
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [userId]);
 
   const fetchAnalytics = async () => {
@@ -58,9 +73,21 @@ const AnalyticsPage = ({ userId }) => {
   return (
     <div className="p-6">
       <div className="max-w-7xl mx-auto">
-        <div className="mb-6">
-          <h2 className="text-2xl font-bold text-white mb-2">Analytics Dashboard</h2>
-          <p className="text-slate-400">Insights and statistics</p>
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-white mb-2">Analytics Dashboard</h2>
+            <p className="text-slate-400">Insights and statistics</p>
+          </div>
+          <button
+            onClick={() => {
+              setLoading(true);
+              fetchAnalytics();
+            }}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">

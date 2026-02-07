@@ -1,10 +1,18 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { Upload, ImageIcon, ArrowRight } from 'lucide-react';
 
 const UploadPage = ({ onImageSelected }) => {
   const [dragActive, setDragActive] = useState(false);
   const [preview, setPreview] = useState(null);
   const fileInputRef = useRef(null);
+
+  // Reset preview when component mounts
+  useEffect(() => {
+    setPreview(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }, []);
 
   const handleDrag = (e) => {
     e.preventDefault();
