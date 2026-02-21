@@ -8,6 +8,7 @@ import EditorPage from './components/EditorPage';
 import HistoryPage from './components/HistoryPage';
 import AnalyticsPage from './components/AnalyticsPage';
 import SettingsPage from './components/SettingsPage';
+import AboutPage from './components/AboutPage';
 
 function App() {
   const [currentPage, setCurrentPage] = useState('login');
@@ -108,6 +109,9 @@ function App() {
       {currentPage === 'settings' && (
         <SettingsPage user={user} />
       )}
+      {currentPage === 'about' && (
+  <AboutPage setCurrentPage={setCurrentPage} />
+)}
     </div>
   );
 }

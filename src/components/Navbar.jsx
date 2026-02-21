@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Menu, X, Upload, History, Settings, LogOut, User, ImageIcon, BarChart3 } from 'lucide-react';
+import { Menu, X, History, Settings, LogOut, User, BarChart3, Microscope, BookOpen } from 'lucide-react';
 import { supabase } from '../supabase/config';
 
 const Navbar = ({ currentPage, setCurrentPage, user }) => {
@@ -15,65 +15,72 @@ const Navbar = ({ currentPage, setCurrentPage, user }) => {
   };
 
   const handleNavClick = (pageId) => {
-    // Special handling for Upload button
     if (pageId === 'upload') {
       const hasImage = sessionStorage.getItem('editorImage');
       if (hasImage) {
-        setCurrentPage('editor'); // Go back to editor if image exists
+        setCurrentPage('editor');
       } else {
-        setCurrentPage('upload'); // Go to upload if no image
+        setCurrentPage('upload');
       }
     } else {
       setCurrentPage(pageId);
     }
+    setMobileMenuOpen(false);
   };
 
   const navItems = [
-    { id: 'upload', label: 'Upload', icon: Upload },
-    { id: 'history', label: 'History', icon: History },
+    { id: 'about',     label: 'About',     icon: BookOpen },
+    { id: 'upload',    label: 'Enhance',   icon: Microscope },
+    { id: 'history',   label: 'History',   icon: History },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-    { id: 'settings', label: 'Settings', icon: Settings },
+    { id: 'settings',  label: 'Settings',  icon: Settings },
   ];
+
+  const isActive = (id) =>
+    id === 'upload'
+      ? currentPage === 'upload' || currentPage === 'editor'
+      : currentPage === id;
+
+  const username = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User';
 
   return (
     <nav className="bg-slate-800 border-b border-slate-700 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-6">
         <div className="flex items-center justify-between h-16">
-          <div className="flex items-center gap-3">
-            <ImageIcon className="w-8 h-8 text-blue-400" />
-            <span className="text-xl font-bold text-white">LuminX</span>
-          </div>
-          
-          <div className="hidden md:flex items-center gap-6">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = item.id === 'upload' 
-                ? (currentPage === 'upload' || currentPage === 'editor')
-                : currentPage === item.id;
-              
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => handleNavClick(item.id)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                    isActive
-                      ? 'bg-blue-600 text-white' 
-                      : 'text-slate-300 hover:text-white hover:bg-slate-700'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
+
+          {/* Logo — clicking goes to About */}
+          <button onClick={() => handleNavClick('about')}
+                  className="flex items-center gap-2 group">
+            <BookOpen className="w-8 h-8 text-blue-400" />
+            <div className="text-left">
+              <span className="text-xl font-bold text-white">LuminX</span>
+              <span className="text-xs text-slate-400 block -mt-1">Research Platform</span>
+            </div>
+          </button>
+
+          {/* Desktop nav */}
+          <div className="hidden md:flex items-center gap-1">
+            {navItems.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => handleNavClick(id)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm ${
+                  isActive(id)
+                    ? 'bg-blue-600 text-white'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-700'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                {label}
+              </button>
+            ))}
           </div>
 
+          {/* User + logout */}
           <div className="hidden md:flex items-center gap-4">
             <div className="flex items-center gap-2 px-3 py-2 bg-slate-700 rounded-lg">
               <User className="w-4 h-4 text-slate-300" />
-              <span className="text-sm text-slate-300">
-                {user?.user_metadata?.full_name || user?.email?.split('@')[0]}
-              </span>
+              <span className="text-sm text-slate-300">{username}</span>
             </div>
             <button
               onClick={handleLogout}
@@ -84,6 +91,7 @@ const Navbar = ({ currentPage, setCurrentPage, user }) => {
             </button>
           </div>
 
+          {/* Mobile hamburger */}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="md:hidden text-white"
@@ -92,48 +100,34 @@ const Navbar = ({ currentPage, setCurrentPage, user }) => {
           </button>
         </div>
 
+        {/* Mobile menu */}
         {mobileMenuOpen && (
           <div className="md:hidden py-4 space-y-2 border-t border-slate-700">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = item.id === 'upload' 
-                ? (currentPage === 'upload' || currentPage === 'editor')
-                : currentPage === item.id;
-              
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => {
-                    handleNavClick(item.id);
-                    setMobileMenuOpen(false);
-                  }}
-                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-                    isActive
-                      ? 'bg-blue-600 text-white'
-                      : 'text-slate-300 hover:bg-slate-700'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
+            {navItems.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                onClick={() => handleNavClick(id)}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors text-sm ${
+                  isActive(id)
+                    ? 'bg-blue-600 text-white'
+                    : 'text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                {label}
+              </button>
+            ))}
             <div className="pt-2 border-t border-slate-700">
-              <div className="flex items-center gap-2 px-3 py-2 text-slate-300">
+              <div className="flex items-center gap-2 px-3 py-2 text-slate-300 text-sm">
                 <User className="w-4 h-4" />
-                <span className="text-sm">
-                  {user?.user_metadata?.full_name || user?.email?.split('@')[0]}
-                </span>
+                {username}
               </div>
               <button
-                onClick={() => {
-                  handleLogout();
-                  setMobileMenuOpen(false);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 bg-red-600 text-white rounded-lg mt-2"
+                onClick={() => { handleLogout(); setMobileMenuOpen(false); }}
+                className="w-full flex items-center gap-2 px-3 py-2 bg-red-600 text-white rounded-lg mt-2 text-sm"
               >
                 <LogOut className="w-4 h-4" />
-                <span>Logout</span>
+                Logout
               </button>
             </div>
           </div>
