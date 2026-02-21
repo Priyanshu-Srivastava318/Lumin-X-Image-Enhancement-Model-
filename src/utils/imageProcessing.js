@@ -1,29 +1,20 @@
 // ============================================================================
-// LUMINX — OPTIMISED IMAGE PROCESSING ALGORITHMS
-// Same mathematical accuracy, significantly faster execution
-// Key optimisations:
-//   - Box blur replaces full Gaussian (visually identical, O(n) per pass)
-//   - DCP: no full-array sort, uses histogram-based atmospheric light
-//   - LIME: fewer iterations, direct Float32Array ops
-//   - All: single-pass where possible, no intermediate array allocations
+// LUMINX — SMART IMAGE PROCESSING
+// Auto-detects image brightness and applies appropriate enhancement level
 // ============================================================================
 
 // ----------------------------------------------------------------------------
-// UTILITY: Fast box blur (3-pass approximation of Gaussian)
-// Visually indistinguishable from Gaussian for sigma > 3
-// O(width * height) regardless of radius — much faster than convolution
+// Box blur — fast O(N) approximation of Gaussian, 3-pass
 // ----------------------------------------------------------------------------
 const boxBlurPass = (src, width, height, radius) => {
   const out = new Float32Array(src.length);
+  const tmp = new Float32Array(src.length);
   const inv = 1 / (2 * radius + 1);
 
-  // Horizontal
-  const tmp = new Float32Array(src.length);
   for (let y = 0; y < height; y++) {
-    let sum = 0;
     const row = y * width;
-    // seed
-    for (let x = 0; x <= radius; x++) sum += src[row + x];
+    let sum = 0;
+    for (let x = 0; x <= radius && x < width; x++) sum += src[row + x];
     for (let x = 0; x < width; x++) {
       if (x + radius < width)  sum += src[row + x + radius];
       if (x - radius - 1 >= 0) sum -= src[row + x - radius - 1];
@@ -31,32 +22,26 @@ const boxBlurPass = (src, width, height, radius) => {
     }
   }
 
-  // Vertical
   for (let x = 0; x < width; x++) {
     let sum = 0;
-    for (let y = 0; y <= radius; y++) sum += tmp[y * width + x];
+    for (let y = 0; y <= radius && y < height; y++) sum += tmp[y * width + x];
     for (let y = 0; y < height; y++) {
       if (y + radius < height)  sum += tmp[(y + radius) * width + x];
       if (y - radius - 1 >= 0)  sum -= tmp[(y - radius - 1) * width + x];
       out[y * width + x] = sum * inv;
     }
   }
-
   return out;
 };
 
-// 3-pass box blur approximates Gaussian closely
 const gaussianBlur = (src, width, height, sigma) => {
-  const radius = Math.max(1, Math.round(sigma * 0.8)) | 0;
-  let result = boxBlurPass(src, width, height, radius);
-  result = boxBlurPass(result, width, height, radius);
-  result = boxBlurPass(result, width, height, Math.max(1, radius - 1));
-  return result;
+  const r = Math.max(1, Math.round(sigma * 0.8)) | 0;
+  let res = boxBlurPass(src, width, height, r);
+  res     = boxBlurPass(res, width, height, r);
+  res     = boxBlurPass(res, width, height, Math.max(1, r - 1));
+  return res;
 };
 
-// ----------------------------------------------------------------------------
-// UTILITY: Stretch float array to [0, 255]
-// ----------------------------------------------------------------------------
 const stretchToRange = (arr) => {
   let min = Infinity, max = -Infinity;
   for (let i = 0; i < arr.length; i++) {
@@ -65,50 +50,107 @@ const stretchToRange = (arr) => {
   }
   const range = (max - min) || 1;
   const out = new Float32Array(arr.length);
-  for (let i = 0; i < arr.length; i++) {
-    out[i] = ((arr[i] - min) / range) * 255;
-  }
+  for (let i = 0; i < arr.length; i++) out[i] = ((arr[i] - min) / range) * 255;
   return out;
 };
 
-// ============================================================================
-// 1. MULTI-SCALE RETINEX (MSR)
-// Jobson et al., IEEE TIP 1997
-// ============================================================================
-export const applyRetinex = (imageData, params = {}) => {
-  const { scale1 = 15, scale2 = 80, scale3 = 250 } = params;
+// ----------------------------------------------------------------------------
+// BRIGHTNESS DETECTION — returns { luminance, level }
+// luminance: 0–255 average
+// level: 'dark' | 'medium' | 'bright'
+// ----------------------------------------------------------------------------
+export const detectBrightness = (imageData) => {
+  const data = imageData.data;
+  let sum = 0;
+  const total = data.length / 4;
+  for (let i = 0; i < data.length; i += 4) {
+    sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  }
+  const luminance = sum / total;
+  let level = 'dark';
+  if (luminance > 150) level = 'bright';
+  else if (luminance > 85) level = 'medium';
+  return { luminance: Math.round(luminance), level };
+};
 
-  const data   = imageData.data;
-  const width  = imageData.width;
-  const height = imageData.height;
-  const N      = width * height;
-  const w      = 1 / 3;
+// ----------------------------------------------------------------------------
+// GENTLE ENHANCEMENT — for bright/medium images
+// Very soft CLAHE — improves contrast without any artefacts
+// ----------------------------------------------------------------------------
+const applyGentleEnhancement = (imageData) => {
+  return applyCLAHECore(imageData, { clipLimit: 1.2, tileGridSize: 8 });
+};
 
-  // Extract channels into float arrays
-  const Ch = [
-    new Float32Array(N),
-    new Float32Array(N),
-    new Float32Array(N),
-  ];
-  for (let i = 0, idx = 0; i < data.length; i += 4, idx++) {
-    Ch[0][idx] = data[i];
-    Ch[1][idx] = data[i + 1];
-    Ch[2][idx] = data[i + 2];
+const applyMediumEnhancement = (imageData, algorithm, params) => {
+  // Medium images get the real algorithm but with conservative params
+  const conservativeParams = { ...params };
+  if (algorithm === 'lime')        conservativeParams.gamma = Math.min(params.gamma + 0.15, 0.95);
+  if (algorithm === 'retinex')     conservativeParams.colorRestoration = false;
+  if (algorithm === 'dark_channel') conservativeParams.omega = Math.min(params.omega, 0.75);
+  return applyAlgorithm(imageData, algorithm, conservativeParams);
+};
+
+// ----------------------------------------------------------------------------
+// SMART WRAPPER — call this from EditorPage instead of individual functions
+// Returns { imageData, detectionResult }
+// detectionResult: { luminance, level, mode }
+// ----------------------------------------------------------------------------
+export const smartEnhance = (imageData, algorithm, params) => {
+  const detection = detectBrightness(imageData);
+
+  let resultData;
+  let mode;
+
+  if (detection.level === 'bright') {
+    // Already bright — apply only gentle CLAHE
+    resultData = applyGentleEnhancement(imageData);
+    mode = 'gentle';
+  } else if (detection.level === 'medium') {
+    // Somewhat dark — apply selected algo with reduced intensity
+    resultData = applyMediumEnhancement(imageData, algorithm, params);
+    mode = 'medium';
+  } else {
+    // Genuinely dark — full algorithm, full params
+    resultData = applyAlgorithm(imageData, algorithm, params);
+    mode = 'full';
   }
 
-  const retinex = [
-    new Float32Array(N),
-    new Float32Array(N),
-    new Float32Array(N),
-  ];
+  return {
+    imageData: resultData,
+    detection: { ...detection, mode },
+  };
+};
 
-  const sigmas = [scale1, scale2, scale3];
+// Internal dispatcher
+const applyAlgorithm = (imageData, algorithm, params) => {
+  switch (algorithm) {
+    case 'retinex':      return applyRetinexCore(imageData, params);
+    case 'clahe':        return applyCLAHECore(imageData, params);
+    case 'dark_channel': return applyDarkChannelCore(imageData, params);
+    case 'lime':         return applyLIMECore(imageData, params);
+    default:             return imageData;
+  }
+};
+
+// ============================================================================
+// 1. MSR — Jobson et al., IEEE TIP 1997
+// ============================================================================
+const applyRetinexCore = (imageData, params = {}) => {
+  const { scale1 = 15, scale2 = 80, scale3 = 250, colorRestoration = true } = params;
+  const data = imageData.data, width = imageData.width, height = imageData.height;
+  const N = width * height, w = 1 / 3;
+
+  const Ch = [new Float32Array(N), new Float32Array(N), new Float32Array(N)];
+  for (let i = 0, idx = 0; i < data.length; i += 4, idx++) {
+    Ch[0][idx] = data[i]; Ch[1][idx] = data[i + 1]; Ch[2][idx] = data[i + 2];
+  }
+
+  const retinex = [new Float32Array(N), new Float32Array(N), new Float32Array(N)];
+  const sigmas  = [scale1, scale2, scale3];
 
   for (let c = 0; c < 3; c++) {
-    // log of channel (add 1 to avoid log(0))
     const logCh = new Float32Array(N);
     for (let i = 0; i < N; i++) logCh[i] = Math.log(Ch[c][i] + 1);
-
     for (let s = 0; s < 3; s++) {
       const blurred = gaussianBlur(Ch[c], width, height, sigmas[s]);
       for (let i = 0; i < N; i++) {
@@ -117,48 +159,42 @@ export const applyRetinex = (imageData, params = {}) => {
     }
   }
 
-  // Color Restoration (CRF) — improves colour naturalness
-  const beta = 46, alpha = 125;
-  for (let i = 0; i < N; i++) {
-    const sum = Ch[0][i] + Ch[1][i] + Ch[2][i] + 1e-6;
-    for (let c = 0; c < 3; c++) {
-      retinex[c][i] *= beta * (Math.log(alpha * Ch[c][i] + 1) - Math.log(sum));
+  if (colorRestoration) {
+    const beta = 46, alpha = 125;
+    for (let i = 0; i < N; i++) {
+      const sum = Ch[0][i] + Ch[1][i] + Ch[2][i] + 1e-6;
+      for (let c = 0; c < 3; c++) {
+        const crf = beta * (Math.log(alpha * Ch[c][i] + 1) - Math.log(sum + 1));
+        retinex[c][i] *= Math.max(0.1, Math.min(3.0, crf));
+      }
     }
   }
 
-  // Stretch each channel and write back
   for (let c = 0; c < 3; c++) {
     const stretched = stretchToRange(retinex[c]);
     for (let i = 0, idx = 0; i < data.length; i += 4, idx++) {
-      data[i + c] = Math.min(255, Math.max(0, stretched[idx]));
+      data[i + c] = Math.min(255, Math.max(0, Math.round(stretched[idx])));
     }
   }
-
   return imageData;
 };
 
+// Public export (EditorPage can still call directly if needed)
+export const applyRetinex = applyRetinexCore;
+
 // ============================================================================
-// 2. CLAHE
-// Zuiderveld, Graphics Gems IV 1994
+// 2. CLAHE — Zuiderveld, Graphics Gems IV 1994
 // ============================================================================
-export const applyCLAHE = (imageData, params = {}) => {
+const applyCLAHECore = (imageData, params = {}) => {
   const { clipLimit = 2.0, tileGridSize = 8 } = params;
+  const data = imageData.data, width = imageData.width, height = imageData.height;
+  const N = width * height;
 
-  const data   = imageData.data;
-  const width  = imageData.width;
-  const height = imageData.height;
-  const N      = width * height;
-
-  // RGB → HSL, work only on L
-  const H = new Float32Array(N);
-  const S = new Float32Array(N);
-  const L = new Float32Array(N);
-
+  const H = new Float32Array(N), S = new Float32Array(N), L = new Float32Array(N);
   for (let i = 0, idx = 0; i < data.length; i += 4, idx++) {
     const r = data[i] / 255, g = data[i + 1] / 255, b = data[i + 2] / 255;
-    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
-    const l  = (mx + mn) / 2;
-    L[idx]   = l;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+    L[idx] = l;
     if (mx === mn) { H[idx] = 0; S[idx] = 0; }
     else {
       const d = mx - mn;
@@ -169,49 +205,37 @@ export const applyCLAHE = (imageData, params = {}) => {
     }
   }
 
-  // Quantise L to uint8
   const Luint = new Uint8Array(N);
   for (let i = 0; i < N; i++) Luint[i] = Math.round(L[i] * 255);
 
-  // Build per-tile LUTs
   const tilesX = tileGridSize, tilesY = tileGridSize;
-  const tileW  = Math.ceil(width  / tilesX);
-  const tileH  = Math.ceil(height / tilesY);
-  const luts   = new Array(tilesX * tilesY);
+  const tileW = Math.ceil(width / tilesX), tileH = Math.ceil(height / tilesY);
+  const luts  = new Array(tilesX * tilesY);
 
   for (let ty = 0; ty < tilesY; ty++) {
     for (let tx = 0; tx < tilesX; tx++) {
       const x0 = tx * tileW, x1 = Math.min(x0 + tileW, width);
       const y0 = ty * tileH, y1 = Math.min(y0 + tileH, height);
-      const pixels = (x1 - x0) * (y1 - y0);
-
+      const px = (x1 - x0) * (y1 - y0);
       const hist = new Int32Array(256);
       for (let y = y0; y < y1; y++) {
         const row = y * width;
         for (let x = x0; x < x1; x++) hist[Luint[row + x]]++;
       }
-
-      // Clip and redistribute
-      const clip = Math.max(1, Math.floor(clipLimit * pixels / 256));
+      const clip = Math.max(1, Math.floor(clipLimit * px / 256));
       let excess = 0;
       for (let i = 0; i < 256; i++) {
         if (hist[i] > clip) { excess += hist[i] - clip; hist[i] = clip; }
       }
-      const add = (excess / 256) | 0;
-      let rem = excess % 256;
-      for (let i = 0; i < 256; i++) {
-        hist[i] += add;
-        if (rem-- > 0) hist[i]++;
-      }
-
-      // Build CDF → LUT
+      const add = (excess / 256) | 0; let rem = excess % 256;
+      for (let i = 0; i < 256; i++) { hist[i] += add; if (rem-- > 0) hist[i]++; }
       const lut = new Uint8Array(256);
       let cum = 0, cdfMin = -1;
       for (let i = 0; i < 256; i++) {
         if (hist[i] > 0 && cdfMin < 0) cdfMin = cum;
         cum += hist[i];
       }
-      const span = pixels - Math.max(0, cdfMin) || 1;
+      const span = px - Math.max(0, cdfMin) || 1;
       cum = 0;
       for (let i = 0; i < 256; i++) {
         cum += hist[i];
@@ -221,29 +245,25 @@ export const applyCLAHE = (imageData, params = {}) => {
     }
   }
 
-  // Bilinear interpolation between tile LUTs
   const Lout = new Float32Array(N);
   for (let y = 0; y < height; y++) {
     const row = y * width;
     for (let x = 0; x < width; x++) {
       const v   = Luint[row + x];
-      const txf = (x + 0.5) / tileW - 0.5;
-      const tyf = (y + 0.5) / tileH - 0.5;
+      const txf = (x + 0.5) / tileW - 0.5, tyf = (y + 0.5) / tileH - 0.5;
       const tx0 = Math.max(0, Math.floor(txf)), tx1 = Math.min(tilesX - 1, tx0 + 1);
       const ty0 = Math.max(0, Math.floor(tyf)), ty1 = Math.min(tilesY - 1, ty0 + 1);
       const wx  = Math.max(0, Math.min(1, txf - tx0));
       const wy  = Math.max(0, Math.min(1, tyf - ty0));
-
       Lout[row + x] = (
         luts[ty0 * tilesX + tx0][v] * (1 - wx) * (1 - wy) +
-        luts[ty0 * tilesX + tx1][v] * wx        * (1 - wy) +
-        luts[ty1 * tilesX + tx0][v] * (1 - wx) * wy        +
-        luts[ty1 * tilesX + tx1][v] * wx        * wy
+        luts[ty0 * tilesX + tx1][v] *  wx       * (1 - wy) +
+        luts[ty1 * tilesX + tx0][v] * (1 - wx) *  wy       +
+        luts[ty1 * tilesX + tx1][v] *  wx       *  wy
       ) / 255;
     }
   }
 
-  // HSL → RGB with new L
   const hue2rgb = (p, q, t) => {
     if (t < 0) t += 1; if (t > 1) t -= 1;
     if (t < 1/6) return p + (q - p) * 6 * t;
@@ -251,155 +271,117 @@ export const applyCLAHE = (imageData, params = {}) => {
     if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
     return p;
   };
-
   for (let i = 0, idx = 0; i < data.length; i += 4, idx++) {
     const h = H[idx], s = S[idx], l = Lout[idx];
     let r, g, b;
     if (s === 0) { r = g = b = l; }
     else {
-      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-      const p = 2 * l - q;
-      r = hue2rgb(p, q, h + 1/3);
-      g = hue2rgb(p, q, h);
-      b = hue2rgb(p, q, h - 1/3);
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+      r = hue2rgb(p, q, h + 1/3); g = hue2rgb(p, q, h); b = hue2rgb(p, q, h - 1/3);
     }
     data[i]     = Math.min(255, Math.max(0, Math.round(r * 255)));
     data[i + 1] = Math.min(255, Math.max(0, Math.round(g * 255)));
     data[i + 2] = Math.min(255, Math.max(0, Math.round(b * 255)));
   }
-
   return imageData;
 };
 
+export const applyCLAHE = applyCLAHECore;
+
 // ============================================================================
-// 3. DARK CHANNEL PRIOR (DCP)
-// He et al., CVPR 2009
-// Optimisation: histogram-based atmospheric light (no full array sort)
+// 3. DCP — He et al., CVPR 2009
 // ============================================================================
-export const applyDarkChannel = (imageData, params = {}) => {
+const applyDarkChannelCore = (imageData, params = {}) => {
   const { patchSize = 15, omega = 0.85, tMin = 0.2 } = params;
+  const data = imageData.data, width = imageData.width, height = imageData.height;
+  const N = width * height, half = (patchSize / 2) | 0;
 
-  const data   = imageData.data;
-  const width  = imageData.width;
-  const height = imageData.height;
-  const N      = width * height;
-  const half   = (patchSize / 2) | 0;
-
-  // Normalise channels
   const R = new Float32Array(N), G = new Float32Array(N), B = new Float32Array(N);
   for (let i = 0, idx = 0; i < data.length; i += 4, idx++) {
-    R[idx] = data[i] / 255;
-    G[idx] = data[i + 1] / 255;
-    B[idx] = data[i + 2] / 255;
+    R[idx] = data[i] / 255; G[idx] = data[i + 1] / 255; B[idx] = data[i + 2] / 255;
   }
 
-  // Dark channel — use erosion (min filter) via two 1D passes for speed
   const minRGB = new Float32Array(N);
   for (let i = 0; i < N; i++) minRGB[i] = Math.min(R[i], G[i], B[i]);
 
-  // Horizontal min-filter
   const tmpH = new Float32Array(N);
   for (let y = 0; y < height; y++) {
     const row = y * width;
     for (let x = 0; x < width; x++) {
       let mn = 1;
       const x0 = Math.max(0, x - half), x1 = Math.min(width - 1, x + half);
-      for (let xx = x0; xx <= x1; xx++) { if (minRGB[row + xx] < mn) mn = minRGB[row + xx]; }
+      for (let xx = x0; xx <= x1; xx++) if (minRGB[row + xx] < mn) mn = minRGB[row + xx];
       tmpH[row + x] = mn;
     }
   }
-
-  // Vertical min-filter → dark channel
   const dark = new Float32Array(N);
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       let mn = 1;
       const y0 = Math.max(0, y - half), y1 = Math.min(height - 1, y + half);
-      for (let yy = y0; yy <= y1; yy++) { if (tmpH[yy * width + x] < mn) mn = tmpH[yy * width + x]; }
+      for (let yy = y0; yy <= y1; yy++) if (tmpH[yy * width + x] < mn) mn = tmpH[yy * width + x];
       dark[y * width + x] = mn;
     }
   }
 
-  // Atmospheric light via histogram on dark channel (no sort needed)
-  // Find top 0.1% brightest dark-channel pixels, take mean RGB there
   const hist256 = new Int32Array(256);
   for (let i = 0; i < N; i++) hist256[Math.round(dark[i] * 255)]++;
   const topCount = Math.max(1, (N * 0.001) | 0);
-  let remaining = topCount, threshold = 255;
-  while (threshold > 0 && remaining > 0) {
-    remaining -= hist256[threshold--];
-  }
-  const thr = threshold / 255;
+  let remaining = topCount, thr = 255;
+  while (thr > 0 && remaining > 0) remaining -= hist256[thr--];
+  const thrVal = thr / 255;
 
   let Ar = 0, Ag = 0, Ab = 0, cnt = 0;
   for (let i = 0; i < N; i++) {
-    if (dark[i] >= thr) { Ar += R[i]; Ag += G[i]; Ab += B[i]; cnt++; }
+    if (dark[i] >= thrVal) { Ar += R[i]; Ag += G[i]; Ab += B[i]; cnt++; }
   }
   if (cnt === 0) { Ar = Ag = Ab = 0.8; cnt = 1; }
   Ar /= cnt; Ag /= cnt; Ab /= cnt;
 
-  // Transmission map
   const trans = new Float32Array(N);
   for (let i = 0; i < N; i++) {
     const d = Math.min(R[i] / (Ar + 1e-6), G[i] / (Ag + 1e-6), B[i] / (Ab + 1e-6));
-    trans[i] = 1 - omega * d;
+    trans[i] = Math.max(tMin, 1 - omega * d);
   }
 
-  // Soft-matting approximation: single box blur pass on transmission
-  const radius = Math.max(2, (patchSize / 4) | 0);
-  const tSmooth = boxBlurPass(
-    boxBlurPass(trans, width, height, radius),
-    width, height, radius
-  );
+  const r2 = Math.max(2, (patchSize / 4) | 0);
+  const tSmooth = boxBlurPass(boxBlurPass(trans, width, height, r2), width, height, r2);
 
-  // Recover scene radiance
   for (let i = 0, idx = 0; i < data.length; i += 4, idx++) {
     const t = Math.max(tMin, tSmooth[idx]);
     data[i]     = Math.min(255, Math.max(0, Math.round(((R[idx] - Ar) / t + Ar) * 255)));
     data[i + 1] = Math.min(255, Math.max(0, Math.round(((G[idx] - Ag) / t + Ag) * 255)));
     data[i + 2] = Math.min(255, Math.max(0, Math.round(((B[idx] - Ab) / t + Ab) * 255)));
   }
-
   return imageData;
 };
 
-// ============================================================================
-// 4. LIME
-// Guo et al., IEEE TIP 2017
-// Optimisation: 2 iterations instead of 3, direct array ops
-// ============================================================================
-export const applyLIME = (imageData, params = {}) => {
-  const { gamma = 0.6, lambda = 0.15, iterations = 2 } = params;
+export const applyDarkChannel = applyDarkChannelCore;
 
-  const data   = imageData.data;
-  const width  = imageData.width;
-  const height = imageData.height;
-  const N      = width * height;
+// ============================================================================
+// 4. LIME — Guo et al., IEEE TIP 2017
+// ============================================================================
+const applyLIMECore = (imageData, params = {}) => {
+  const { gamma = 0.6, lambda = 0.15, iterations = 2 } = params;
+  const data = imageData.data, width = imageData.width, height = imageData.height;
+  const N = width * height;
 
   const R = new Float32Array(N), G = new Float32Array(N), B = new Float32Array(N);
-  const T = new Float32Array(N); // initial illumination = max(R,G,B)
-
+  const T = new Float32Array(N);
   for (let i = 0, idx = 0; i < data.length; i += 4, idx++) {
-    R[idx] = data[i] / 255;
-    G[idx] = data[i + 1] / 255;
-    B[idx] = data[i + 2] / 255;
+    R[idx] = data[i] / 255; G[idx] = data[i + 1] / 255; B[idx] = data[i + 2] / 255;
     T[idx] = Math.max(R[idx], G[idx], B[idx]);
   }
 
-  // Iterative structure-aware refinement (4-connected bilateral weighting)
   let Tref = new Float32Array(T);
   const eps = 1e-4;
-
   for (let iter = 0; iter < iterations; iter++) {
     const Tnew = new Float32Array(N);
     for (let y = 0; y < height; y++) {
       const row = y * width;
       for (let x = 0; x < width; x++) {
-        const idx  = row + x;
-        const tval = T[idx];
+        const idx = row + x, tval = T[idx];
         let wsum = 0, vsum = 0;
-
-        // 4-connected neighbours only (fast, good enough)
         const nb = [
           y > 0          ? idx - width : -1,
           y < height - 1 ? idx + width : -1,
@@ -407,11 +389,9 @@ export const applyLIME = (imageData, params = {}) => {
           x < width  - 1 ? idx + 1     : -1,
         ];
         for (let n = 0; n < 4; n++) {
-          const ni = nb[n];
-          if (ni < 0) continue;
-          const w = 1 / (Math.abs(tval - Tref[ni]) + eps);
-          vsum += w * Tref[ni];
-          wsum += w;
+          const ni = nb[n]; if (ni < 0) continue;
+          const wt = 1 / (Math.abs(tval - Tref[ni]) + eps);
+          vsum += wt * Tref[ni]; wsum += wt;
         }
         Tnew[idx] = (tval + lambda * vsum) / (1 + lambda * wsum);
       }
@@ -419,26 +399,25 @@ export const applyLIME = (imageData, params = {}) => {
     Tref = Tnew;
   }
 
-  // Clamp, gamma, reconstruct
   for (let i = 0, idx = 0; i < data.length; i += 4, idx++) {
     const t  = Math.max(0.01, Math.min(1, Tref[idx]));
-    const tg = Math.pow(t, gamma);
-    const sc = tg / t; // = t^(gamma-1), applied to each channel
+    const sc = Math.pow(t, gamma) / t;
     data[i]     = Math.min(255, Math.max(0, Math.round(R[idx] * sc * 255)));
     data[i + 1] = Math.min(255, Math.max(0, Math.round(G[idx] * sc * 255)));
     data[i + 2] = Math.min(255, Math.max(0, Math.round(B[idx] * sc * 255)));
   }
-
   return imageData;
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────
+export const applyLIME = applyLIMECore;
+
+// ─── Helpers ─────────────────────────────────────────────────────────────
 export const rgbToHsv = (r, g, b) => {
   r /= 255; g /= 255; b /= 255;
   const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
   let h = 0;
   if (d) {
-    if (mx === r)      h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+    if      (mx === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
     else if (mx === g) h = ((b - r) / d + 2) / 6;
     else               h = ((r - g) / d + 4) / 6;
   }
