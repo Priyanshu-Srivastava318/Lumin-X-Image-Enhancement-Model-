@@ -1,30 +1,26 @@
 // ============================================================================
-// LUMINX — SMART IMAGE PROCESSING
-// Auto-detects image brightness and applies appropriate enhancement level
+// LUMINX — IMAGE PROCESSING ALGORITHMS (STABLE FINAL)
 // ============================================================================
 
-// ----------------------------------------------------------------------------
-// Box blur — fast O(N) approximation of Gaussian, 3-pass
-// ----------------------------------------------------------------------------
+// ─── Box blur (fast O(N) Gaussian approximation) ──────────────────────────
 const boxBlurPass = (src, width, height, radius) => {
-  const out = new Float32Array(src.length);
   const tmp = new Float32Array(src.length);
+  const out = new Float32Array(src.length);
   const inv = 1 / (2 * radius + 1);
 
   for (let y = 0; y < height; y++) {
     const row = y * width;
     let sum = 0;
-    for (let x = 0; x <= radius && x < width; x++) sum += src[row + x];
+    for (let x = 0; x < Math.min(radius + 1, width); x++) sum += src[row + x];
     for (let x = 0; x < width; x++) {
       if (x + radius < width)  sum += src[row + x + radius];
       if (x - radius - 1 >= 0) sum -= src[row + x - radius - 1];
       tmp[row + x] = sum * inv;
     }
   }
-
   for (let x = 0; x < width; x++) {
     let sum = 0;
-    for (let y = 0; y <= radius && y < height; y++) sum += tmp[y * width + x];
+    for (let y = 0; y < Math.min(radius + 1, height); y++) sum += tmp[y * width + x];
     for (let y = 0; y < height; y++) {
       if (y + radius < height)  sum += tmp[(y + radius) * width + x];
       if (y - radius - 1 >= 0)  sum -= tmp[(y - radius - 1) * width + x];
@@ -54,11 +50,7 @@ const stretchToRange = (arr) => {
   return out;
 };
 
-// ----------------------------------------------------------------------------
-// BRIGHTNESS DETECTION — returns { luminance, level }
-// luminance: 0–255 average
-// level: 'dark' | 'medium' | 'bright'
-// ----------------------------------------------------------------------------
+// ─── Brightness detection ─────────────────────────────────────────────────
 export const detectBrightness = (imageData) => {
   const data = imageData.data;
   let sum = 0;
@@ -73,61 +65,43 @@ export const detectBrightness = (imageData) => {
   return { luminance: Math.round(luminance), level };
 };
 
-// ----------------------------------------------------------------------------
-// GENTLE ENHANCEMENT — for bright/medium images
-// Very soft CLAHE — improves contrast without any artefacts
-// ----------------------------------------------------------------------------
-const applyGentleEnhancement = (imageData) => {
-  return applyCLAHECore(imageData, { clipLimit: 1.2, tileGridSize: 8 });
-};
-
-const applyMediumEnhancement = (imageData, algorithm, params) => {
-  // Medium images get the real algorithm but with conservative params
-  const conservativeParams = { ...params };
-  if (algorithm === 'lime')        conservativeParams.gamma = Math.min(params.gamma + 0.15, 0.95);
-  if (algorithm === 'retinex')     conservativeParams.colorRestoration = false;
-  if (algorithm === 'dark_channel') conservativeParams.omega = Math.min(params.omega, 0.75);
-  return applyAlgorithm(imageData, algorithm, conservativeParams);
-};
-
-// ----------------------------------------------------------------------------
-// SMART WRAPPER — call this from EditorPage instead of individual functions
-// Returns { imageData, detectionResult }
-// detectionResult: { luminance, level, mode }
-// ----------------------------------------------------------------------------
+// ─── Smart wrapper ────────────────────────────────────────────────────────
 export const smartEnhance = (imageData, algorithm, params) => {
   const detection = detectBrightness(imageData);
-
-  let resultData;
-  let mode;
+  let mode = 'full';
 
   if (detection.level === 'bright') {
-    // Already bright — apply only gentle CLAHE
-    resultData = applyGentleEnhancement(imageData);
     mode = 'gentle';
-  } else if (detection.level === 'medium') {
-    // Somewhat dark — apply selected algo with reduced intensity
-    resultData = applyMediumEnhancement(imageData, algorithm, params);
+    return {
+      imageData: applyCLAHEInternal(imageData, { clipLimit: 1.2, tileGridSize: 8 }),
+      detection: { ...detection, mode },
+    };
+  }
+
+  if (detection.level === 'medium') {
     mode = 'medium';
-  } else {
-    // Genuinely dark — full algorithm, full params
-    resultData = applyAlgorithm(imageData, algorithm, params);
-    mode = 'full';
+    const safeParams = { ...params };
+    if (algorithm === 'lime')         safeParams.gamma  = Math.min((params.gamma  || 0.6)  + 0.15, 0.92);
+    if (algorithm === 'dark_channel') safeParams.omega  = Math.min((params.omega  || 0.85) * 0.85,  0.75);
+    if (algorithm === 'retinex')      safeParams.colorRestoration = false;
+    return {
+      imageData: dispatchAlgorithm(imageData, algorithm, safeParams),
+      detection: { ...detection, mode },
+    };
   }
 
   return {
-    imageData: resultData,
+    imageData: dispatchAlgorithm(imageData, algorithm, params),
     detection: { ...detection, mode },
   };
 };
 
-// Internal dispatcher
-const applyAlgorithm = (imageData, algorithm, params) => {
+const dispatchAlgorithm = (imageData, algorithm, params) => {
   switch (algorithm) {
-    case 'retinex':      return applyRetinexCore(imageData, params);
-    case 'clahe':        return applyCLAHECore(imageData, params);
-    case 'dark_channel': return applyDarkChannelCore(imageData, params);
-    case 'lime':         return applyLIMECore(imageData, params);
+    case 'retinex':      return applyRetinexInternal(imageData, params);
+    case 'clahe':        return applyCLAHEInternal(imageData, params);
+    case 'dark_channel': return applyDarkChannelInternal(imageData, params);
+    case 'lime':         return applyLIMEInternal(imageData, params);
     default:             return imageData;
   }
 };
@@ -135,8 +109,8 @@ const applyAlgorithm = (imageData, algorithm, params) => {
 // ============================================================================
 // 1. MSR — Jobson et al., IEEE TIP 1997
 // ============================================================================
-const applyRetinexCore = (imageData, params = {}) => {
-  const { scale1 = 15, scale2 = 80, scale3 = 250, colorRestoration = true } = params;
+const applyRetinexInternal = (imageData, params = {}) => {
+  const { scale1 = 15, scale2 = 80, scale3 = 250 } = params;
   const data = imageData.data, width = imageData.width, height = imageData.height;
   const N = width * height, w = 1 / 3;
 
@@ -146,26 +120,13 @@ const applyRetinexCore = (imageData, params = {}) => {
   }
 
   const retinex = [new Float32Array(N), new Float32Array(N), new Float32Array(N)];
-  const sigmas  = [scale1, scale2, scale3];
-
   for (let c = 0; c < 3; c++) {
     const logCh = new Float32Array(N);
     for (let i = 0; i < N; i++) logCh[i] = Math.log(Ch[c][i] + 1);
-    for (let s = 0; s < 3; s++) {
-      const blurred = gaussianBlur(Ch[c], width, height, sigmas[s]);
+    for (const sigma of [scale1, scale2, scale3]) {
+      const blurred = gaussianBlur(Ch[c], width, height, sigma);
       for (let i = 0; i < N; i++) {
         retinex[c][i] += w * (logCh[i] - Math.log(blurred[i] + 1));
-      }
-    }
-  }
-
-  if (colorRestoration) {
-    const beta = 46, alpha = 125;
-    for (let i = 0; i < N; i++) {
-      const sum = Ch[0][i] + Ch[1][i] + Ch[2][i] + 1e-6;
-      for (let c = 0; c < 3; c++) {
-        const crf = beta * (Math.log(alpha * Ch[c][i] + 1) - Math.log(sum + 1));
-        retinex[c][i] *= Math.max(0.1, Math.min(3.0, crf));
       }
     }
   }
@@ -179,13 +140,12 @@ const applyRetinexCore = (imageData, params = {}) => {
   return imageData;
 };
 
-// Public export (EditorPage can still call directly if needed)
-export const applyRetinex = applyRetinexCore;
+export const applyRetinex = applyRetinexInternal;
 
 // ============================================================================
 // 2. CLAHE — Zuiderveld, Graphics Gems IV 1994
 // ============================================================================
-const applyCLAHECore = (imageData, params = {}) => {
+const applyCLAHEInternal = (imageData, params = {}) => {
   const { clipLimit = 2.0, tileGridSize = 8 } = params;
   const data = imageData.data, width = imageData.width, height = imageData.height;
   const N = width * height;
@@ -210,7 +170,7 @@ const applyCLAHECore = (imageData, params = {}) => {
 
   const tilesX = tileGridSize, tilesY = tileGridSize;
   const tileW = Math.ceil(width / tilesX), tileH = Math.ceil(height / tilesY);
-  const luts  = new Array(tilesX * tilesY);
+  const luts = new Array(tilesX * tilesY);
 
   for (let ty = 0; ty < tilesY; ty++) {
     for (let tx = 0; tx < tilesX; tx++) {
@@ -235,7 +195,7 @@ const applyCLAHECore = (imageData, params = {}) => {
         if (hist[i] > 0 && cdfMin < 0) cdfMin = cum;
         cum += hist[i];
       }
-      const span = px - Math.max(0, cdfMin) || 1;
+      const span = (px - Math.max(0, cdfMin)) || 1;
       cum = 0;
       for (let i = 0; i < 256; i++) {
         cum += hist[i];
@@ -249,12 +209,12 @@ const applyCLAHECore = (imageData, params = {}) => {
   for (let y = 0; y < height; y++) {
     const row = y * width;
     for (let x = 0; x < width; x++) {
-      const v   = Luint[row + x];
+      const v = Luint[row + x];
       const txf = (x + 0.5) / tileW - 0.5, tyf = (y + 0.5) / tileH - 0.5;
       const tx0 = Math.max(0, Math.floor(txf)), tx1 = Math.min(tilesX - 1, tx0 + 1);
       const ty0 = Math.max(0, Math.floor(tyf)), ty1 = Math.min(tilesY - 1, ty0 + 1);
-      const wx  = Math.max(0, Math.min(1, txf - tx0));
-      const wy  = Math.max(0, Math.min(1, tyf - ty0));
+      const wx = Math.max(0, Math.min(1, txf - tx0));
+      const wy = Math.max(0, Math.min(1, tyf - ty0));
       Lout[row + x] = (
         luts[ty0 * tilesX + tx0][v] * (1 - wx) * (1 - wy) +
         luts[ty0 * tilesX + tx1][v] *  wx       * (1 - wy) +
@@ -271,6 +231,7 @@ const applyCLAHECore = (imageData, params = {}) => {
     if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
     return p;
   };
+
   for (let i = 0, idx = 0; i < data.length; i += 4, idx++) {
     const h = H[idx], s = S[idx], l = Lout[idx];
     let r, g, b;
@@ -286,12 +247,12 @@ const applyCLAHECore = (imageData, params = {}) => {
   return imageData;
 };
 
-export const applyCLAHE = applyCLAHECore;
+export const applyCLAHE = applyCLAHEInternal;
 
 // ============================================================================
 // 3. DCP — He et al., CVPR 2009
 // ============================================================================
-const applyDarkChannelCore = (imageData, params = {}) => {
+const applyDarkChannelInternal = (imageData, params = {}) => {
   const { patchSize = 15, omega = 0.85, tMin = 0.2 } = params;
   const data = imageData.data, width = imageData.width, height = imageData.height;
   const N = width * height, half = (patchSize / 2) | 0;
@@ -356,12 +317,12 @@ const applyDarkChannelCore = (imageData, params = {}) => {
   return imageData;
 };
 
-export const applyDarkChannel = applyDarkChannelCore;
+export const applyDarkChannel = applyDarkChannelInternal;
 
 // ============================================================================
 // 4. LIME — Guo et al., IEEE TIP 2017
 // ============================================================================
-const applyLIMECore = (imageData, params = {}) => {
+const applyLIMEInternal = (imageData, params = {}) => {
   const { gamma = 0.6, lambda = 0.15, iterations = 2 } = params;
   const data = imageData.data, width = imageData.width, height = imageData.height;
   const N = width * height;
@@ -409,9 +370,8 @@ const applyLIMECore = (imageData, params = {}) => {
   return imageData;
 };
 
-export const applyLIME = applyLIMECore;
+export const applyLIME = applyLIMEInternal;
 
-// ─── Helpers ─────────────────────────────────────────────────────────────
 export const rgbToHsv = (r, g, b) => {
   r /= 255; g /= 255; b /= 255;
   const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;

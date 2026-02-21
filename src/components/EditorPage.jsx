@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { ArrowLeft, Download, Save, Play, RefreshCw, Info, Check, Zap, BookOpen, Award, AlertCircle, Sun, Moon, Sunset } from 'lucide-react';
+import { ArrowLeft, Download, Save, Play, RefreshCw, Info, Check, Zap, BookOpen, Award, AlertCircle, Sun, Moon } from 'lucide-react';
 import { supabase } from '../supabase/config';
 import {
   smartEnhance,
@@ -11,33 +11,25 @@ import {
 import { calculateAllMetrics, metricExplanations } from '../utils/metrics';
 
 const EditorPage = ({ image, onBack, userId }) => {
-  const [algorithm, setAlgorithm]         = useState('retinex');
-  const [enhancedImage, setEnhancedImage] = useState(null);
-  const [isProcessing, setIsProcessing]   = useState(false);
-  const [isSaving, setIsSaving]           = useState(false);
-  const [saveSuccess, setSaveSuccess]     = useState(false);
-  const [metrics, setMetrics]             = useState(null);
+  const [algorithm, setAlgorithm]           = useState('retinex');
+  const [enhancedImage, setEnhancedImage]   = useState(null);
+  const [isProcessing, setIsProcessing]     = useState(false);
+  const [isSaving, setIsSaving]             = useState(false);
+  const [saveSuccess, setSaveSuccess]       = useState(false);
+  const [metrics, setMetrics]               = useState(null);
   const [showMetricInfo, setShowMetricInfo] = useState(null);
-  const [detection, setDetection]         = useState(null); // { luminance, level, mode }
+  const [detection, setDetection]           = useState(null);
 
-  const [retinexParams, setRetinexParams] = useState({
-    scale1: 15, scale2: 80, scale3: 250, colorRestoration: true,
-  });
-  const [claheParams, setClaheParams] = useState({
-    clipLimit: 2.0, tileGridSize: 8,
-  });
-  const [darkChannelParams, setDarkChannelParams] = useState({
-    patchSize: 15, omega: 0.85, tMin: 0.2,
-  });
-  const [limeParams, setLimeParams] = useState({
-    gamma: 0.6, lambda: 0.15, iterations: 2,
-  });
+  const [retinexParams, setRetinexParams] = useState({ scale1: 15, scale2: 80, scale3: 250 });
+  const [claheParams, setClaheParams]     = useState({ clipLimit: 2.0, tileGridSize: 8 });
+  const [darkChannelParams, setDarkChannelParams] = useState({ patchSize: 15, omega: 0.85, tMin: 0.2 });
+  const [limeParams, setLimeParams]       = useState({ gamma: 0.6, lambda: 0.15, iterations: 2 });
 
   const canvasRef = useRef(null);
 
   const algorithms = [
     {
-      id: 'retinex',      shortName: 'MSR',
+      id: 'retinex', shortName: 'MSR',
       name: 'Multi-Scale Retinex (MSR)',
       desc: 'Decomposes image into illumination and reflectance components using multi-scale Gaussian surround functions',
       reference: 'Jobson et al., IEEE TIP 1997',
@@ -45,7 +37,7 @@ const EditorPage = ({ image, onBack, userId }) => {
       theory: 'Based on human visual perception model - separates intrinsic reflectance from incident illumination',
     },
     {
-      id: 'clahe',        shortName: 'CLAHE',
+      id: 'clahe', shortName: 'CLAHE',
       name: 'Contrast Limited Adaptive Histogram Equalization',
       desc: 'Adaptive histogram equalization with contrast limiting to prevent noise over-amplification in uniform regions',
       reference: 'Zuiderveld, Graphics Gems IV 1994',
@@ -61,7 +53,7 @@ const EditorPage = ({ image, onBack, userId }) => {
       theory: 'Based on observation: most outdoor haze-free patches contain very low intensity pixels in at least one color channel',
     },
     {
-      id: 'lime',         shortName: 'LIME',
+      id: 'lime', shortName: 'LIME',
       name: 'Low-light Image Enhancement via Illumination Map',
       desc: 'Estimates illumination map and refines it using structure-preserving optimization',
       reference: 'Guo et al., IEEE TIP 2017',
@@ -82,7 +74,6 @@ const EditorPage = ({ image, onBack, userId }) => {
     }
   };
 
-  // ── Apply Enhancement ──────────────────────────────────────────────────
   const applyEnhancement = () => {
     if (!image) return;
     setIsProcessing(true);
@@ -98,73 +89,60 @@ const EditorPage = ({ image, onBack, userId }) => {
         ctx.drawImage(image, 0, 0);
 
         let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
-        // Smart enhance — auto-detects brightness
-        const result = smartEnhance(imageData, algorithm, getCurrentParams());
-        imageData = result.imageData;
+        const result  = smartEnhance(imageData, algorithm, getCurrentParams());
         setDetection(result.detection);
-
-        ctx.putImageData(imageData, 0, 0);
+        ctx.putImageData(result.imageData, 0, 0);
 
         const enhanced = new Image();
         enhanced.src   = canvas.toDataURL();
         enhanced.onload = () => {
           const processingTime = (performance.now() - startTime) / 1000;
-          const calculatedMetrics = calculateAllMetrics(image, enhanced, processingTime);
-          setMetrics(calculatedMetrics);
+          setMetrics(calculateAllMetrics(image, enhanced, processingTime));
           setEnhancedImage(enhanced);
           setIsProcessing(false);
         };
-      } catch (error) {
-        console.error('Enhancement error:', error);
+      } catch (err) {
+        console.error('Enhancement error:', err);
         alert('Processing failed. Please try different parameters.');
         setIsProcessing(false);
       }
     }, 100);
   };
 
-  // ── Save to Supabase ───────────────────────────────────────────────────
   const saveToSupabase = async () => {
     if (!enhancedImage || !userId) return;
     setIsSaving(true);
     try {
       const blob     = await (await fetch(enhancedImage.src)).blob();
       const fileName = `${userId}/${Date.now()}.png`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('enhanced-images').upload(fileName, blob);
-      if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('enhanced-images').getPublicUrl(fileName);
-
-      const { error: dbError } = await supabase.from('enhancements').insert({
-        user_id:            userId,
-        algorithm:          currentAlgo.name,
+      const { error: upErr } = await supabase.storage.from('enhanced-images').upload(fileName, blob);
+      if (upErr) throw upErr;
+      const { data: { publicUrl } } = supabase.storage.from('enhanced-images').getPublicUrl(fileName);
+      const { error: dbErr } = await supabase.from('enhancements').insert({
+        user_id: userId,
+        algorithm: currentAlgo.name,
         enhanced_image_url: publicUrl,
         parameters: {
-          algorithm_id:   algorithm,
+          algorithm_id: algorithm,
           algorithm_name: currentAlgo.name,
           detection,
           ...getCurrentParams(),
           metrics: metrics ? {
-            psnr:               metrics.psnr,
-            ssim:               metrics.ssim,
-            processingTime:     metrics.processingTime,
-            illuminationGain:   metrics.illuminationGain,
-            contrastImprovement:metrics.contrastImprovement,
+            psnr: metrics.psnr, ssim: metrics.ssim,
+            processingTime: metrics.processingTime,
+            illuminationGain: metrics.illuminationGain,
+            contrastImprovement: metrics.contrastImprovement,
             originalBrightness: metrics.originalBrightness,
             enhancedBrightness: metrics.enhancedBrightness,
-            qualityGrade:       metrics.qualityGrade,
+            qualityGrade: metrics.qualityGrade,
           } : null,
         },
       });
-      if (dbError) throw dbError;
-
+      if (dbErr) throw dbErr;
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
-    } catch (error) {
-      console.error('Error saving:', error);
+    } catch (err) {
+      console.error('Save error:', err);
       alert('Failed to save. Please try again.');
     } finally {
       setIsSaving(false);
@@ -173,90 +151,63 @@ const EditorPage = ({ image, onBack, userId }) => {
 
   const downloadImage = () => {
     if (!enhancedImage) return;
-    const link     = document.createElement('a');
-    link.download  = `LuminX_${currentAlgo.shortName}_Enhanced_${Date.now()}.png`;
-    link.href      = enhancedImage.src;
-    link.click();
+    const a = document.createElement('a');
+    a.download = `LuminX_${currentAlgo.shortName}_Enhanced_${Date.now()}.png`;
+    a.href = enhancedImage.src;
+    a.click();
   };
 
-  // ── Detection Banner ───────────────────────────────────────────────────
+  // Detection banner
   const DetectionBanner = () => {
     if (!detection) return null;
-    const configs = {
-      full:   { bg: 'bg-blue-900/30',   border: 'border-blue-700/50',   icon: <Moon   className="w-4 h-4 text-blue-400"   />, text: 'text-blue-300',   label: 'Low-light detected',        sub: `Full ${currentAlgo.shortName} algorithm applied` },
-      medium: { bg: 'bg-yellow-900/20', border: 'border-yellow-700/40', icon: <Sunset className="w-4 h-4 text-yellow-400" />, text: 'text-yellow-300', label: 'Medium exposure detected',   sub: 'Conservative enhancement applied' },
-      gentle: { bg: 'bg-green-900/20',  border: 'border-green-700/40',  icon: <Sun    className="w-4 h-4 text-green-400"  />, text: 'text-green-300',  label: 'Well-exposed image detected', sub: 'Gentle contrast adjustment applied' },
+    const cfg = {
+      full:   { cls: 'bg-blue-900/30 border-blue-700/50',   icon: <Moon className="w-4 h-4 text-blue-400" />,  textCls: 'text-blue-300',   title: 'Low-light detected',          sub: `Full ${currentAlgo.shortName} algorithm applied` },
+      medium: { cls: 'bg-yellow-900/20 border-yellow-700/40', icon: <Zap  className="w-4 h-4 text-yellow-400" />, textCls: 'text-yellow-300', title: 'Medium exposure detected',     sub: 'Conservative enhancement applied' },
+      gentle: { cls: 'bg-green-900/20 border-green-700/40',  icon: <Sun  className="w-4 h-4 text-green-400" />,  textCls: 'text-green-300',  title: 'Well-exposed image detected', sub: 'Gentle contrast adjustment applied' },
     };
-    const c = configs[detection.mode] || configs.gentle;
+    const c = cfg[detection.mode] || cfg.gentle;
     return (
-      <div className={`flex items-start gap-3 p-3 rounded-lg border ${c.bg} ${c.border}`}>
-        <div className="mt-0.5">{c.icon}</div>
+      <div className={`flex items-start gap-3 p-3 rounded-lg border ${c.cls}`}>
+        <div className="mt-0.5 flex-shrink-0">{c.icon}</div>
         <div>
-          <p className={`text-xs font-semibold ${c.text}`}>{c.label}</p>
-          <p className="text-xs text-slate-500 mt-0.5">
-            {c.sub} · Avg luminance: {detection.luminance}/255
-          </p>
+          <p className={`text-xs font-semibold ${c.textCls}`}>{c.title}</p>
+          <p className="text-xs text-slate-500 mt-0.5">{c.sub} · Luminance: {detection.luminance}/255</p>
         </div>
       </div>
     );
   };
 
-  // ── Parameter Panels ───────────────────────────────────────────────────
-  const renderAlgorithmParameters = () => {
-    const theoryBox = (
-      <div className="p-3 bg-blue-900/20 border border-blue-700/50 rounded-lg mb-4">
-        <p className="text-xs text-slate-300">
-          <strong className="text-blue-400">Theory:</strong> {currentAlgo.theory}
-        </p>
-      </div>
-    );
+  const theoryBox = (
+    <div className="p-3 bg-blue-900/20 border border-blue-700/50 rounded-lg mb-4">
+      <p className="text-xs text-slate-300">
+        <strong className="text-blue-400">Theory:</strong> {currentAlgo.theory}
+      </p>
+    </div>
+  );
 
+  const renderAlgorithmParameters = () => {
     switch (algorithm) {
       case 'retinex':
         return (
           <div className="space-y-4">
             {theoryBox}
-            <div>
-              <div className="flex justify-between items-center mb-2">
-                <label className="text-sm text-slate-300">Scale σ₁ (Fine Details)</label>
-                <span className="text-xs text-blue-400 font-mono bg-slate-900 px-2 py-1 rounded">{retinexParams.scale1}</span>
+            {[
+              { label: 'Scale σ₁ (Fine Details)', key: 'scale1', min: 5,   max: 30,  step: 1,  tip: 'Captures fine texture and edges (5-30 pixels)' },
+              { label: 'Scale σ₂ (Mid-range)',    key: 'scale2', min: 40,  max: 120, step: 5,  tip: 'Balances local and global features (40-120 pixels)' },
+              { label: 'Scale σ₃ (Global)',       key: 'scale3', min: 150, max: 350, step: 10, tip: 'Handles overall illumination (150-350 pixels)' },
+            ].map(p => (
+              <div key={p.key}>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-sm text-slate-300">{p.label}</label>
+                  <span className="text-xs text-blue-400 font-mono bg-slate-900 px-2 py-1 rounded">{retinexParams[p.key]}</span>
+                </div>
+                <input type="range" min={p.min} max={p.max} step={p.step}
+                  value={retinexParams[p.key]}
+                  onChange={e => setRetinexParams({ ...retinexParams, [p.key]: parseInt(e.target.value) })}
+                  className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                <p className="text-xs text-slate-500 mt-1">{p.tip}</p>
               </div>
-              <input type="range" min="5" max="30" step="1"
-                value={retinexParams.scale1}
-                onChange={e => setRetinexParams({ ...retinexParams, scale1: parseInt(e.target.value) })}
-                className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
-              <p className="text-xs text-slate-500 mt-1">Captures fine texture and edges (5-30 pixels)</p>
-            </div>
-            <div>
-              <div className="flex justify-between items-center mb-2">
-                <label className="text-sm text-slate-300">Scale σ₂ (Mid-range)</label>
-                <span className="text-xs text-blue-400 font-mono bg-slate-900 px-2 py-1 rounded">{retinexParams.scale2}</span>
-              </div>
-              <input type="range" min="40" max="120" step="5"
-                value={retinexParams.scale2}
-                onChange={e => setRetinexParams({ ...retinexParams, scale2: parseInt(e.target.value) })}
-                className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
-              <p className="text-xs text-slate-500 mt-1">Balances local and global features (40-120 pixels)</p>
-            </div>
-            <div>
-              <div className="flex justify-between items-center mb-2">
-                <label className="text-sm text-slate-300">Scale σ₃ (Global)</label>
-                <span className="text-xs text-blue-400 font-mono bg-slate-900 px-2 py-1 rounded">{retinexParams.scale3}</span>
-              </div>
-              <input type="range" min="150" max="350" step="10"
-                value={retinexParams.scale3}
-                onChange={e => setRetinexParams({ ...retinexParams, scale3: parseInt(e.target.value) })}
-                className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
-              <p className="text-xs text-slate-500 mt-1">Handles overall illumination (150-350 pixels)</p>
-            </div>
-            <div className="flex items-center justify-between">
-              <label className="text-sm text-slate-300">Color Restoration (CRF)</label>
-              <button
-                onClick={() => setRetinexParams({ ...retinexParams, colorRestoration: !retinexParams.colorRestoration })}
-                className={`w-10 h-5 rounded-full transition-colors relative ${retinexParams.colorRestoration ? 'bg-blue-600' : 'bg-slate-600'}`}>
-                <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform ${retinexParams.colorRestoration ? 'translate-x-5' : 'translate-x-0.5'}`} />
-              </button>
-            </div>
+            ))}
           </div>
         );
 
@@ -277,8 +228,7 @@ const EditorPage = ({ image, onBack, userId }) => {
             </div>
             <div>
               <label className="text-sm text-slate-300 block mb-2">Tile Grid Size</label>
-              <select
-                value={claheParams.tileGridSize}
+              <select value={claheParams.tileGridSize}
                 onChange={e => setClaheParams({ ...claheParams, tileGridSize: parseInt(e.target.value) })}
                 className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white text-sm">
                 <option value="4">4×4 - Fine (High spatial resolution)</option>
@@ -303,7 +253,7 @@ const EditorPage = ({ image, onBack, userId }) => {
                 value={darkChannelParams.patchSize}
                 onChange={e => setDarkChannelParams({ ...darkChannelParams, patchSize: parseInt(e.target.value) })}
                 className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
-              <p className="text-xs text-slate-500 mt-1">Size of neighborhood for dark channel estimation (5-25 pixels)</p>
+              <p className="text-xs text-slate-500 mt-1">Size of neighborhood for dark channel estimation (5-25 px)</p>
             </div>
             <div>
               <div className="flex justify-between items-center mb-2">
@@ -314,7 +264,7 @@ const EditorPage = ({ image, onBack, userId }) => {
                 value={darkChannelParams.omega}
                 onChange={e => setDarkChannelParams({ ...darkChannelParams, omega: parseFloat(e.target.value) })}
                 className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
-              <p className="text-xs text-slate-500 mt-1">Higher = keeps more haze for depth perception (0.7-1.0)</p>
+              <p className="text-xs text-slate-500 mt-1">Higher = keeps more depth haze (0.7-1.0)</p>
             </div>
             <div>
               <div className="flex justify-between items-center mb-2">
@@ -365,7 +315,7 @@ const EditorPage = ({ image, onBack, userId }) => {
                 value={limeParams.iterations}
                 onChange={e => setLimeParams({ ...limeParams, iterations: parseInt(e.target.value) })}
                 className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" />
-              <p className="text-xs text-slate-500 mt-1">Refinement iterations — more = smoother but slower (1-4)</p>
+              <p className="text-xs text-slate-500 mt-1">Refinement passes — more = smoother but slower (1-4)</p>
             </div>
           </div>
         );
@@ -374,7 +324,6 @@ const EditorPage = ({ image, onBack, userId }) => {
     }
   };
 
-  // ── Render ─────────────────────────────────────────────────────────────
   return (
     <div className="p-6 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 min-h-screen">
       <div className="max-w-7xl mx-auto">
@@ -402,11 +351,11 @@ const EditorPage = ({ image, onBack, userId }) => {
             {enhancedImage && (
               <>
                 <button onClick={downloadImage}
-                        className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2 shadow-lg">
+                  className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2 shadow-lg">
                   <Download className="w-4 h-4" /> Export Result
                 </button>
                 <button onClick={saveToSupabase} disabled={isSaving}
-                        className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2 shadow-lg">
+                  className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2 shadow-lg">
                   <Save className="w-4 h-4" /> {isSaving ? 'Saving...' : 'Save to History'}
                 </button>
               </>
@@ -419,29 +368,25 @@ const EditorPage = ({ image, onBack, userId }) => {
           {/* Left Panel */}
           <div className="lg:col-span-1 space-y-4">
 
-            {/* Algorithm Selection */}
+            {/* Algorithm select */}
             <div className="bg-slate-800 rounded-lg p-4 border border-slate-700 shadow-xl">
               <label className="block text-sm font-semibold text-white mb-3 flex items-center gap-2">
                 <Zap className="w-4 h-4 text-yellow-400" /> Enhancement Algorithm
               </label>
-              <select
-                value={algorithm}
-                onChange={e => setAlgorithm(e.target.value)}
+              <select value={algorithm} onChange={e => setAlgorithm(e.target.value)}
                 className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:border-blue-500 transition-colors cursor-pointer font-medium">
-                {algorithms.map(algo => (
-                  <option key={algo.id} value={algo.id}>
-                    {algo.shortName} - {algo.name.split('(')[0].trim()}
-                  </option>
+                {algorithms.map(a => (
+                  <option key={a.id} value={a.id}>{a.shortName} - {a.name.split('(')[0].trim()}</option>
                 ))}
               </select>
               <div className="mt-3 p-3 bg-blue-900/30 border border-blue-600/50 rounded-lg">
                 <div className="text-xs font-semibold text-blue-300 mb-1">📚 {currentAlgo.reference}</div>
                 <p className="text-xs text-slate-300 mb-2">{currentAlgo.desc}</p>
-                <div className="text-xs text-green-400"><strong>Best for:</strong> {currentAlgo.bestFor}</div>
+                <p className="text-xs text-green-400"><strong>Best for:</strong> {currentAlgo.bestFor}</p>
               </div>
             </div>
 
-            {/* Parameters */}
+            {/* Params */}
             <div className="bg-slate-800 rounded-lg p-4 border border-slate-700 shadow-xl">
               <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
                 <Zap className="w-4 h-4 text-purple-400" /> Algorithm Parameters
@@ -449,10 +394,8 @@ const EditorPage = ({ image, onBack, userId }) => {
               {renderAlgorithmParameters()}
             </div>
 
-            {/* Apply Enhancement Button */}
-            <button
-              onClick={applyEnhancement}
-              disabled={isProcessing}
+            {/* Apply button */}
+            <button onClick={applyEnhancement} disabled={isProcessing}
               className={`w-full py-3 rounded-lg transition-all flex items-center justify-center gap-2 font-semibold shadow-lg ${
                 isProcessing
                   ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
@@ -463,7 +406,7 @@ const EditorPage = ({ image, onBack, userId }) => {
                 : <><Play className="w-5 h-5" /> Apply Enhancement</>}
             </button>
 
-            {/* Detection Banner — shows after processing */}
+            {/* Detection banner */}
             <DetectionBanner />
 
             {/* Metrics */}
@@ -477,19 +420,18 @@ const EditorPage = ({ image, onBack, userId }) => {
                 </div>
                 <div className="space-y-2">
                   {[
-                    { key: 'psnr',  label: 'PSNR',             val: `${metrics.psnr} dB`,            color: 'text-green-400'  },
-                    { key: 'ssim',  label: 'SSIM',             val: metrics.ssim,                    color: 'text-blue-400'   },
-                    { key: 'illum', label: 'Illumination Gain', val: `${metrics.illuminationGain}×`,  color: 'text-yellow-400' },
+                    { key: 'psnr',  label: 'PSNR',              val: `${metrics.psnr} dB`,             color: 'text-green-400'  },
+                    { key: 'ssim',  label: 'SSIM',              val: metrics.ssim,                     color: 'text-blue-400'   },
+                    { key: 'illum', label: 'Illumination Gain', val: `${metrics.illuminationGain}×`,   color: 'text-yellow-400' },
                     { key: null,    label: 'Contrast Improvement', val: `${metrics.contrastImprovement}%`, color: 'text-orange-400' },
-                    { key: null,    label: 'Processing Time',   val: `${metrics.processingTime}s`,    color: 'text-purple-400' },
-                    { key: null,    label: 'Color Fidelity',    val: `${metrics.colorFidelity}%`,     color: 'text-cyan-400'   },
+                    { key: null,    label: 'Processing Time',   val: `${metrics.processingTime}s`,     color: 'text-purple-400' },
+                    { key: null,    label: 'Color Fidelity',    val: `${metrics.colorFidelity}%`,      color: 'text-cyan-400'   },
                   ].map(m => (
                     <div key={m.label}>
-                      <div
-                        className={`flex justify-between items-center ${m.key ? 'cursor-help' : ''}`}
+                      <div className={`flex justify-between items-center ${m.key ? 'cursor-help' : ''}`}
                         onClick={() => m.key && setShowMetricInfo(showMetricInfo === m.key ? null : m.key)}>
                         <span className="text-xs text-slate-400 flex items-center gap-1">
-                          {m.label} {m.key && <Info className="w-3 h-3" />}
+                          {m.label}{m.key && <Info className="w-3 h-3" />}
                         </span>
                         <span className={`text-sm font-bold ${m.color}`}>{m.val}</span>
                       </div>
@@ -546,7 +488,6 @@ const EditorPage = ({ image, onBack, userId }) => {
               </div>
             )}
 
-            {/* Research Guidelines */}
             <div className="bg-yellow-900/20 border border-yellow-600/50 rounded-lg p-4 shadow-lg">
               <div className="flex items-start gap-3">
                 <AlertCircle className="w-5 h-5 text-yellow-400 flex-shrink-0 mt-0.5" />
@@ -564,7 +505,6 @@ const EditorPage = ({ image, onBack, userId }) => {
           </div>
         </div>
       </div>
-
       <canvas ref={canvasRef} className="hidden" />
     </div>
   );
