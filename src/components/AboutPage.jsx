@@ -159,7 +159,7 @@ const AboutPage = ({ setCurrentPage }) => {
 
           <h1 className="text-6xl md:text-8xl font-bold text-white mb-4 tracking-tight"
               style={{ letterSpacing: '-0.03em' }}>
-            Lumi<span className="text-blue-400">X</span>
+            Lumin-<span className="text-blue-400">X</span>
           </h1>
 
           <p className="text-lg text-slate-400 mb-3 font-medium">
